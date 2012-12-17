@@ -1,0 +1,113 @@
+#!/usr/bin/ruby
+require "yaml"
+
+$CACHE = "/home/tanner/.cache/dejastitcher.yml"
+#$OP_DIR = "/home/tanner/Testbed"
+#$OP_DIR = "/media/Danzey/Decompress/multivol_snapshot"
+#$OP_DIR = ""
+
+
+puts "ARGV: #{ARGV}"
+if !ARGV[0].nil? then
+  if File.exists? ARGV[0] and File.directory? ARGV[0] then
+    $OP_DIR = ARGV[0]
+  else
+    puts "!!! Given argument is not a directory. Aborting."
+    abort
+  end
+else
+  puts "!!! No arguments added. Aborting."
+  abort
+end
+
+Dir.chdir($OP_DIR)
+
+@files = []
+@numfiles = 0
+
+class SplitFile
+  attr_reader :dir, :filename
+  def initialize(dir, filename)
+    @dir = dir
+    @filename = filename
+  end
+end
+
+def save_state
+  if File.exists? $CACHE
+    File.delete($CACHE)
+    File.open($CACHE, "w") do |f| 
+      YAML.dump(@files, f)
+    end
+  else
+    File.open($CACHE, "w") do |f| 
+      YAML.dump(@files, f)
+    end
+  end
+end
+def load_state
+  if File.exists? $CACHE  
+    File.open($CACHE) do |f|
+      YAML::load(f)
+    end
+    return true
+  else
+    return false
+  end
+end
+def delete_state
+  if File.exists? $CACHE
+    File.delete($CACHE)
+  end
+end
+def recurse(tree_start)
+  Dir.chdir(tree_start)
+  sub = (Dir.glob("*")+Dir.glob(".*")).select! {|a| a != "." && a != ".."}
+  subdirs = sub.select {|f| File.directory? f} .sort!
+  subfiles = sub.select {|f| !File.directory? f} .sort!
+  if !subfiles.empty?
+    filename = File.basename tree_start
+    puts "<-> Pushing new file #{filename} onto stack of files."
+    @files.push(SplitFile.new(tree_start, filename))
+  end
+  subdirs.sort!.each do |dir|
+    full_path = File.expand_path dir.force_encoding("US-ASCII")
+    puts "->> Recursing into #{full_path}"
+    recurse full_path
+    puts "<<- Recursed #{full_path}"
+    Dir.chdir(tree_start)
+  end
+end
+
+def assemble_file(dir, name)
+  puts "[#{@numfiles - @files.length}/#{@numfiles}](#{(((@numfiles.to_f - @files.length.to_f)/@numfiles.to_f)*100.to_f).round(2)}%) Assembling #{name} from #{dir}"
+  Dir.chdir(dir)
+  Dir.glob("*").map! do |x| x.to_i end .sort! .each do |x|
+    system("cat \"#{Dir.getwd}/#{x}\" >> \"#{name}0\"")
+  end
+  system("mv \"#{name}0\" ../; cd ..; rm -rf \"#{name}/\"; mv \"#{name}0\" \"#{name}\"")
+  #puts "<-> Returning to #{$OP_DIR}"
+  Dir.chdir($OP_DIR)
+end
+def second_pass(tree_start)
+  puts "--- #{@files.length} files"
+  @numfiles = @files.length
+  @files.length.times do
+    i = @files.pop 
+    assemble_file(i.dir, i.filename)
+    if File.exists?(i.dir) and !File.directory?(i.dir)
+#      save_state()
+    end
+  end
+end
+
+if load_state
+  puts "--- Resuming!"
+  second_pass $OP_DIR
+  #delete_state
+else
+  recurse($OP_DIR)
+  #save_state
+  second_pass($OP_DIR)
+  #delete_state
+end
